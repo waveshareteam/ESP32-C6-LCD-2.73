@@ -1,0 +1,19 @@
+dependencies:
+  waveshare/pcf85063a: ^1.0.1
+  waveshare/qmi8658: ^1.0.1
+  espressif/button: ^4.1.4
+  espressif/esp_lvgl_adapter:
+    public: true
+    version: "0.4.1"
+  idf: '>=5.3'
+  lvgl/lvgl: '>=8,<10'
+description: Board Support Package (BSP) for Waveshare ESP32-C6-LCD-2.73
+repository: git://github.com/waveshareteam/Waveshare-ESP32-components.git
+repository_info:
+  commit_sha: fc44aa8c3a1d7171fcf09be16a64ea59d59b6347
+  path: bsp/esp32_s3_cam_ovxxxx
+tags:
+- bsp
+targets:
+- esp32c6
+version: 1.0.0

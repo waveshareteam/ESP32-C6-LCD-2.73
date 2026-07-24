@@ -1,0 +1,26 @@
+#pragma once
+
+#include "lvgl.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Images */
+LV_IMG_DECLARE(butmenu_image_middle_app_launcher_default_112_112);
+LV_IMG_DECLARE(butmenu_image_middle_recents_screen_trash_48_48);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_battery_charge_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_battery_level1_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_battery_level2_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_battery_level3_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_battery_level4_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_wifi_close_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_wifi_level1_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_wifi_level2_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_status_bar_wifi_level3_24_24);
+LV_IMG_DECLARE(butmenu_image_middle_wallpaper_dark_480_480);
+LV_IMG_DECLARE(butmenu_image_middle_wallpaper_dark_320_320);
+
+#ifdef __cplusplus
+}
+#endif
