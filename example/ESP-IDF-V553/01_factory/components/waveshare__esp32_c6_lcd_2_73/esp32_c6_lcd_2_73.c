@@ -301,6 +301,19 @@ err:
     return ret;
 }
 
+esp_err_t bsp_display_draw_bitmap(int x_start, int y_start, int x_end, int y_end,
+                                  const void *color_data)
+{
+    if (panel_handle == NULL || color_data == NULL ||
+        x_start < 0 || y_start < 0 ||
+        x_end > BSP_LCD_H_RES || y_end > BSP_LCD_V_RES ||
+        x_start >= x_end || y_start >= y_end) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return esp_lcd_panel_draw_bitmap(panel_handle, x_start, y_start, x_end, y_end, color_data);
+}
+
 
 static button_handle_t prev_btn_handle = NULL, next_btn_handle = NULL, enter_btn_handle = NULL;
 void bsp_iot_button_init(void)

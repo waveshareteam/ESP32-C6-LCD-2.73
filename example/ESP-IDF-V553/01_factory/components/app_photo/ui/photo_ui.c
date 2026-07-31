@@ -4,35 +4,27 @@
 #include <string.h>
 
 #include "esp_err.h"
-#include "esp_heap_caps.h"
 #include "esp_jpeg_dec.h"
 #include "esp_log.h"
+#include "bsp/display.h"
 #include "include/butmenu.h"
 
 static const char *TAG = "photo";
 
-#define PHOTO_VIEW_W 320
-#define PHOTO_VIEW_H 320
 #define PHOTO_BTN_W 56
 #define PHOTO_BTN_H 26
-#define PHOTO_DECODE_MAX_BYTES (64 * 1024)
-#define PHOTO_DECODE_ALIGN 8
 
 static generic_file_list_t *s_file_list = NULL;
 static int32_t s_current_idx = 0;
 static lv_group_t *s_photo_group = NULL;
 static jpeg_dec_handle_t s_dec_handle = NULL;
-static uint8_t *s_jpeg_out_buf = NULL;
-static size_t s_jpeg_out_size = 0;
-static lv_image_dsc_t s_img_dsc;
-static lv_obj_t *s_image = NULL;
-static lv_obj_t *s_title = NULL;
+static lv_obj_t *s_key_catcher = NULL;
 
 static void show_message(lv_obj_t *parent, const char *message);
 static void show_photo_screen(lv_obj_t *parent, generic_file_list_t *file_list);
 static void update_photo_display(int32_t index);
 
-static esp_err_t open_decoder(uint16_t width, uint16_t height)
+static esp_err_t open_decoder(void)
 {
     if (s_dec_handle != NULL) {
         jpeg_dec_close(s_dec_handle);
@@ -40,9 +32,10 @@ static esp_err_t open_decoder(uint16_t width, uint16_t height)
     }
 
     jpeg_dec_config_t config = DEFAULT_JPEG_DEC_CONFIG();
-    config.output_type = JPEG_PIXEL_FORMAT_RGB565_LE;
-    config.scale.width = width;
-    config.scale.height = height;
+    /* The ILI9488 driver accepts byte-swapped RGB565 before converting it to
+     * the panel's RGB666 wire format, so request big-endian bytes here. */
+    config.output_type = JPEG_PIXEL_FORMAT_RGB565_BE;
+    config.block_enable = true;
 
     if (jpeg_dec_open(&config, &s_dec_handle) != JPEG_ERR_OK) {
         ESP_LOGE(TAG, "jpeg_dec_open failed");
@@ -50,42 +43,6 @@ static esp_err_t open_decoder(uint16_t width, uint16_t height)
     }
 
     return ESP_OK;
-}
-
-static uint16_t align_down_u16(uint32_t value)
-{
-    return (uint16_t)(value & ~(PHOTO_DECODE_ALIGN - 1U));
-}
-
-static void get_decode_size(uint16_t source_width, uint16_t source_height,
-                            uint16_t *decode_width, uint16_t *decode_height)
-{
-    uint32_t width = source_width;
-    uint32_t height = source_height;
-    const uint32_t max_pixels = PHOTO_DECODE_MAX_BYTES / sizeof(uint16_t);
-
-    while (width * height > max_pixels) {
-        width = (width * 7U) / 8U;
-        height = (height * 7U) / 8U;
-    }
-
-    width = align_down_u16(width);
-    height = align_down_u16(height);
-
-    uint32_t min_width = (source_width + 7U) / 8U;
-    uint32_t min_height = (source_height + 7U) / 8U;
-    min_width = (min_width + 7U) & ~7U;
-    min_height = (min_height + 7U) & ~7U;
-
-    if (width < min_width) {
-        width = min_width;
-    }
-    if (height < min_height) {
-        height = min_height;
-    }
-
-    *decode_width = (uint16_t)width;
-    *decode_height = (uint16_t)height;
 }
 
 static uint8_t *read_file_to_buffer(const char *path, size_t *size)
@@ -127,67 +84,16 @@ static uint8_t *read_file_to_buffer(const char *path, size_t *size)
     return buf;
 }
 
-static void free_output_buffer(void)
-{
-    if (s_jpeg_out_buf != NULL) {
-        jpeg_free_align(s_jpeg_out_buf);
-        s_jpeg_out_buf = NULL;
-        s_jpeg_out_size = 0;
-    }
-}
-
-static const char *photo_basename(const char *path)
-{
-    const char *base = strrchr(path, '/');
-    return (base != NULL) ? base + 1 : path;
-}
-
-static void set_title_for_index(int32_t index)
-{
-    if (s_title == NULL || s_file_list == NULL || s_file_list->count <= 0) {
-        return;
-    }
-
-    lv_label_set_text_fmt(s_title, "%ld/%d  %s",
-                          (long)index + 1,
-                          s_file_list->count,
-                          photo_basename(s_file_list->list[index]));
-}
-
-static void fit_image_to_view(lv_obj_t *img, uint16_t width, uint16_t height)
-{
-    if (width == 0 || height == 0) {
-        return;
-    }
-
-    uint32_t scale_w = (PHOTO_VIEW_W * 256U) / width;
-    uint32_t scale_h = (PHOTO_VIEW_H * 256U) / height;
-    uint32_t scale = (scale_w < scale_h) ? scale_w : scale_h;
-
-    if (scale == 0) {
-        scale = 1;
-    }
-    if (scale > 512) {
-        scale = 512;
-    }
-
-    lv_image_set_scale(img, (uint16_t)scale);
-    lv_obj_center(img);
-}
-
 static void update_photo_display(int32_t index)
 {
-    if (s_file_list == NULL || s_file_list->count <= 0 || s_image == NULL || s_dec_handle == NULL) {
+    if (s_file_list == NULL || s_file_list->count <= 0 || s_dec_handle == NULL) {
         return;
     }
     if (index < 0 || index >= s_file_list->count) {
         return;
     }
 
-    lv_image_set_src(s_image, NULL);
-    free_output_buffer();
-
-    if (open_decoder(0, 0) != ESP_OK) {
+    if (open_decoder() != ESP_OK) {
         return;
     }
 
@@ -212,30 +118,12 @@ static void update_photo_display(int32_t index)
         return;
     }
 
-    uint16_t decode_width = 0;
-    uint16_t decode_height = 0;
-    get_decode_size(header_info.width, header_info.height, &decode_width, &decode_height);
-
-    if (decode_width != header_info.width || decode_height != header_info.height) {
-        ESP_LOGI(TAG, "Scaling JPEG from %ux%u to %ux%u",
-                 header_info.width, header_info.height, decode_width, decode_height);
-
-        if (open_decoder(decode_width, decode_height) != ESP_OK) {
-            jpeg_free_align(jpeg_buf);
-            return;
-        }
-
-        memset(&io, 0, sizeof(io));
-        io.inbuf = jpeg_buf;
-        io.inbuf_len = (int)jpeg_size;
-        memset(&header_info, 0, sizeof(header_info));
-
-        jpeg_ret = jpeg_dec_parse_header(s_dec_handle, &io, &header_info);
-        if (jpeg_ret != JPEG_ERR_OK) {
-            ESP_LOGE(TAG, "Failed to parse scaled jpeg: %s", s_file_list->list[index]);
-            jpeg_free_align(jpeg_buf);
-            return;
-        }
+    if ((header_info.width & 7U) != 0 || (header_info.height & 7U) != 0 ||
+        header_info.width > BSP_LCD_H_RES || header_info.height > BSP_LCD_V_RES) {
+        ESP_LOGE(TAG, "Block mode requires <=320x320 and dimensions divisible by 8: %ux%u",
+                 header_info.width, header_info.height);
+        jpeg_free_align(jpeg_buf);
+        return;
     }
 
     int outbuf_len = 0;
@@ -246,63 +134,75 @@ static void update_photo_display(int32_t index)
         return;
     }
 
-    s_jpeg_out_buf = (uint8_t *)jpeg_calloc_align((size_t)outbuf_len, 16);
-    if (s_jpeg_out_buf == NULL) {
-        ESP_LOGE(TAG, "No memory for jpeg output: %d bytes", outbuf_len);
+    uint8_t *block_buf = (uint8_t *)jpeg_calloc_align((size_t)outbuf_len, 16);
+    if (block_buf == NULL) {
+        ESP_LOGE(TAG, "No memory for jpeg block: %d bytes", outbuf_len);
         jpeg_free_align(jpeg_buf);
         return;
     }
-    s_jpeg_out_size = (size_t)outbuf_len;
-    io.outbuf = s_jpeg_out_buf;
+    io.outbuf = block_buf;
 
-    jpeg_ret = jpeg_dec_process(s_dec_handle, &io);
+    int process_count = 0;
+    jpeg_ret = jpeg_dec_get_process_count(s_dec_handle, &process_count);
+    if (jpeg_ret != JPEG_ERR_OK || process_count <= 0) {
+        ESP_LOGE(TAG, "Invalid jpeg block count: %d", process_count);
+        jpeg_free_align(block_buf);
+        jpeg_free_align(jpeg_buf);
+        return;
+    }
+
+    /* Paint the LVGL background first. JPEG blocks are then written directly
+     * to the panel, so no full RGB565 image has to remain in RAM. */
+    lv_refr_now(NULL);
+    int x = (BSP_LCD_H_RES - header_info.width) / 2;
+    int y = (BSP_LCD_V_RES - header_info.height) / 2;
+    int drawn_lines = 0;
+
+    for (int block = 0; block < process_count; block++) {
+        jpeg_ret = jpeg_dec_process(s_dec_handle, &io);
+        if (jpeg_ret != JPEG_ERR_OK || io.out_size <= 0) {
+            ESP_LOGE(TAG, "JPEG block %d decode failed", block);
+            break;
+        }
+
+        int lines = io.out_size / (header_info.width * sizeof(uint16_t));
+        if (lines <= 0 || drawn_lines + lines > header_info.height ||
+            bsp_display_draw_bitmap(x, y + drawn_lines,
+                                    x + header_info.width, y + drawn_lines + lines,
+                                    block_buf) != ESP_OK) {
+            ESP_LOGE(TAG, "JPEG block %d display failed", block);
+            jpeg_ret = JPEG_ERR_FAIL;
+            break;
+        }
+        drawn_lines += lines;
+    }
+
+    jpeg_free_align(block_buf);
     jpeg_free_align(jpeg_buf);
-
-    if (jpeg_ret != JPEG_ERR_OK) {
-        ESP_LOGE(TAG, "Failed to decode jpeg: %s", s_file_list->list[index]);
-        free_output_buffer();
+    if (jpeg_ret != JPEG_ERR_OK || drawn_lines != header_info.height) {
         return;
     }
 
     s_current_idx = index;
-    memset(&s_img_dsc, 0, sizeof(s_img_dsc));
-    s_img_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-    s_img_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
-    s_img_dsc.header.w = header_info.width;
-    s_img_dsc.header.h = header_info.height;
-    s_img_dsc.header.stride = header_info.width * 2;
-    s_img_dsc.data_size = s_jpeg_out_size;
-    s_img_dsc.data = s_jpeg_out_buf;
-
-    lv_image_set_src(s_image, &s_img_dsc);
-    fit_image_to_view(s_image, header_info.width, header_info.height);
-    set_title_for_index(index);
+    ESP_LOGI(TAG, "Displayed JPEG at native resolution: %ux%u, block buffer %d bytes",
+             header_info.width, header_info.height, outbuf_len);
 }
 
-static void prev_btn_event_cb(lv_event_t *e)
+static void photo_key_event_cb(lv_event_t *e)
 {
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_file_list == NULL || s_file_list->count <= 0) {
+    if (lv_event_get_code(e) != LV_EVENT_KEY ||
+        s_file_list == NULL || s_file_list->count <= 0) {
         return;
     }
 
-    int32_t next = s_current_idx - 1;
-    if (next < 0) {
-        next = s_file_list->count - 1;
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_LEFT) {
+        int32_t next = s_current_idx - 1;
+        update_photo_display(next < 0 ? s_file_list->count - 1 : next);
+    } else if (key == LV_KEY_RIGHT) {
+        int32_t next = s_current_idx + 1;
+        update_photo_display(next >= s_file_list->count ? 0 : next);
     }
-    update_photo_display(next);
-}
-
-static void next_btn_event_cb(lv_event_t *e)
-{
-    if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_file_list == NULL || s_file_list->count <= 0) {
-        return;
-    }
-
-    int32_t next = s_current_idx + 1;
-    if (next >= s_file_list->count) {
-        next = 0;
-    }
-    update_photo_display(next);
 }
 
 static void back_btn_event_cb(lv_event_t *e)
@@ -316,6 +216,13 @@ static void back_btn_event_cb(lv_event_t *e)
         s_photo_group = NULL;
     }
     bm_app_close_notify_handle();
+}
+
+static void photo_exit_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) {
+        bm_app_close_notify_handle();
+    }
 }
 
 static lv_obj_t *create_control_button(lv_obj_t *parent, const char *text, lv_align_t align,
@@ -377,21 +284,21 @@ static void show_photo_screen(lv_obj_t *parent, generic_file_list_t *file_list)
     lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
     setup_photo_group();
 
-    s_title = lv_label_create(parent);
-    lv_obj_set_width(s_title, 300);
-    lv_label_set_long_mode(s_title, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_obj_set_style_text_color(s_title, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(s_title, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_align(s_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(s_title, LV_ALIGN_TOP_MID, 0, 6);
-
-    s_image = lv_image_create(parent);
-    lv_obj_center(s_image);
-    lv_obj_remove_flag(s_image, LV_OBJ_FLAG_SCROLLABLE);
-
-    create_control_button(parent, LV_SYMBOL_LEFT, LV_ALIGN_BOTTOM_LEFT, 8, -8, prev_btn_event_cb);
-    create_control_button(parent, "Back", LV_ALIGN_BOTTOM_MID, 0, -8, back_btn_event_cb);
-    create_control_button(parent, LV_SYMBOL_RIGHT, LV_ALIGN_BOTTOM_RIGHT, -8, -8, next_btn_event_cb);
+    /* One invisible focused object receives all three physical navigation
+     * keys, leaving every LCD pixel available for the photograph. */
+    s_key_catcher = lv_obj_create(parent);
+    lv_obj_set_size(s_key_catcher, 1, 1);
+    lv_obj_set_pos(s_key_catcher, 0, 0);
+    lv_obj_set_style_bg_opa(s_key_catcher, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(s_key_catcher, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_outline_width(s_key_catcher, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_key_catcher, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(s_key_catcher, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(s_key_catcher, photo_key_event_cb, LV_EVENT_KEY, NULL);
+    lv_obj_add_event_cb(s_key_catcher, photo_exit_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_group_add_obj(s_photo_group, s_key_catcher);
+    lv_group_focus_obj(s_key_catcher);
+    lv_group_set_editing(s_photo_group, true);
 
     update_photo_display(0);
 }
@@ -402,7 +309,7 @@ esp_err_t init_photo_player(void)
         return ESP_OK;
     }
 
-    return open_decoder(0, 0);
+    return open_decoder();
 }
 
 void init_photo_ui_screen(lv_obj_t *parent, generic_file_list_t *file_list, const char *message)
@@ -432,18 +339,14 @@ void deinit_photo_player(void)
         s_photo_group = NULL;
     }
 
-    free_output_buffer();
-
     if (s_dec_handle != NULL) {
         jpeg_dec_close(s_dec_handle);
         s_dec_handle = NULL;
     }
 
-    memset(&s_img_dsc, 0, sizeof(s_img_dsc));
     s_file_list = NULL;
     s_current_idx = 0;
-    s_image = NULL;
-    s_title = NULL;
+    s_key_catcher = NULL;
 
     ESP_LOGI(TAG, "Photo player deinitialized");
 }

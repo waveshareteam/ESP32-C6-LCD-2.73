@@ -75,6 +75,15 @@ typedef struct {
 esp_err_t bsp_display_new(const bsp_display_config_t *config, esp_lcd_panel_handle_t *ret_panel, esp_lcd_panel_io_handle_t *ret_io);
 
 /**
+ * @brief Draw an RGB565 bitmap directly to the initialized LCD panel
+ *
+ * This is intended for low-memory producers such as block JPEG decoders. The
+ * caller must hold the LVGL/display lock while drawing.
+ */
+esp_err_t bsp_display_draw_bitmap(int x_start, int y_start, int x_end, int y_end,
+                                  const void *color_data);
+
+/**
  * @brief Turn on display backlight
  *
  * Backlight is controlled with IO expander TCA9554.
